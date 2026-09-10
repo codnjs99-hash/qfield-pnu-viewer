@@ -45,8 +45,6 @@ Item {
     })
 
     handlerRegistered = ok !== false
-    if (handlerRegistered)
-      console.log("qfield-pnu-viewer: map handler registered")
     return handlerRegistered
   }
 
@@ -59,9 +57,7 @@ Item {
 
   Connections {
     target: iface
-    function onLoadProjectEnded() {
-      retryTimer.restart()
-    }
+    function onLoadProjectEnded() { retryTimer.restart() }
   }
 
   Component.onCompleted: {
@@ -76,14 +72,11 @@ Item {
     } catch (e) {}
   }
 
-  function configure() {
-    settingsDialog.open()
-  }
+  function configure() { settingsDialog.open() }
 
   function normalizePnu(value) {
     var s = String(value === undefined || value === null ? "" : value).trim()
-    if (s.endsWith(".0"))
-      s = s.slice(0, -2)
+    if (s.endsWith(".0")) s = s.slice(0, -2)
     s = s.replace(/[^0-9]/g, "")
     return s.length === 19 ? s : ""
   }
@@ -93,8 +86,7 @@ Item {
     for (var i = 0; i < names.length; i++) {
       try {
         var p = normalizePnu(feature.attribute(names[i]))
-        if (p)
-          return p
+        if (p) return p
       } catch (e) {}
     }
     return ""
@@ -157,14 +149,10 @@ Item {
   function getJson(url, success, failure) {
     var xhr = new XMLHttpRequest()
     xhr.onreadystatechange = function() {
-      if (xhr.readyState !== XMLHttpRequest.DONE)
-        return
+      if (xhr.readyState !== XMLHttpRequest.DONE) return
       if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          success(JSON.parse(xhr.responseText))
-        } catch (e) {
-          failure("JSON 응답 해석 실패")
-        }
+        try { success(JSON.parse(xhr.responseText)) }
+        catch (e) { failure("JSON 응답 해석 실패") }
       } else {
         failure("HTTP " + xhr.status)
       }
@@ -176,17 +164,14 @@ Item {
   }
 
   function walk(node, callback) {
-    if (node === null || node === undefined)
-      return
+    if (node === null || node === undefined) return
     if (Array.isArray(node)) {
-      for (var i = 0; i < node.length; i++)
-        walk(node[i], callback)
+      for (var i = 0; i < node.length; i++) walk(node[i], callback)
       return
     }
     if (typeof node === "object") {
       callback(node)
-      for (var k in node)
-        walk(node[k], callback)
+      for (var k in node) walk(node[k], callback)
     }
   }
 
@@ -199,6 +184,86 @@ Item {
     return ""
   }
 
+  function findParcelObject(data) {
+    var found = null
+    walk(data, function(o) {
+      if (found) return
+      if (o.lndpclAr !== undefined || o.lndcgrCodeNm !== undefined || o.lndcgrCode !== undefined)
+        found = o
+    })
+    return found
+  }
+
+  function formatArea(value) {
+    var s = String(value === undefined || value === null ? "" : value).trim()
+    if (!s) return "-"
+    var n = Number(s)
+    if (isNaN(n)) return s + " ㎡"
+    var rounded = Math.round(n * 100) / 100
+    return String(rounded).replace(/\B(?=(\d{3})+(?!\d))/g, ",") + " ㎡"
+  }
+
+  function zoneLinesFromData(data) {
+    var grouped = {}
+    walk(data, function(o) {
+      var name = first(o, ["prposAreaDstrcCodeNm", "prposAreaDstrcCode"])
+      if (!name) return
+      var relation = first(o, ["cnflcAtNm", "cnflcAt"]) || "지정"
+      if (!grouped[relation]) grouped[relation] = []
+      if (grouped[relation].indexOf(name) < 0) grouped[relation].push(name)
+    })
+
+    var lines = []
+    var order = ["포함", "저촉", "접함", "지정"]
+    for (var i = 0; i < order.length; i++) {
+      var rel = order[i]
+      if (grouped[rel] && grouped[rel].length) {
+        lines.push("[" + rel + "]")
+        for (var j = 0; j < grouped[rel].length; j++) lines.push("• " + grouped[rel][j])
+      }
+    }
+    for (var key in grouped) {
+      if (order.indexOf(key) >= 0) continue
+      lines.push("[" + key + "]")
+      for (var k = 0; k < grouped[key].length; k++) lines.push("• " + grouped[key][k])
+    }
+    return lines
+  }
+
+  function renderLand(parcel, zoneData, parcelError, zoneError) {
+    var lines = ["PNU " + currentPnu, "", "[토지 기본정보]"]
+
+    if (parcel) {
+      var dong = first(parcel, ["ldCodeNm"])
+      var lot = first(parcel, ["mnnmSlno"])
+      var address = dong
+      if (lot) address = address ? address + " " + lot : lot
+
+      lines.push("소재지: " + (address || "-"))
+      lines.push("지번: " + (lot || "-"))
+      lines.push("지목: " + (first(parcel, ["lndcgrCodeNm", "lndcgrCode"]) || "-"))
+      lines.push("지적면적: " + formatArea(first(parcel, ["lndpclAr"])))
+      lines.push("대장구분: " + (first(parcel, ["regstrSeCodeNm", "regstrSeCode"]) || "-"))
+      var scale = first(parcel, ["ladFrtlScNm", "ladFrtlSc"])
+      if (scale) lines.push("도면축척: " + scale)
+      var updated = first(parcel, ["lastUpdtDt"])
+      if (updated) lines.push("기준일: " + updated)
+    } else {
+      lines.push("토지 기본정보를 불러오지 못했습니다" + (parcelError ? " · " + parcelError : ""))
+    }
+
+    lines.push("")
+    lines.push("[토지이용계획]")
+    var zones = zoneData ? zoneLinesFromData(zoneData) : []
+    if (zones.length) {
+      for (var i = 0; i < zones.length; i++) lines.push(zones[i])
+    } else {
+      lines.push(zoneError ? "지정내역 조회 실패 · " + zoneError : "조회된 지역·지구 지정내역이 없습니다.")
+    }
+
+    resultText = lines.join("\n")
+  }
+
   function queryLand() {
     if (!settings.vworldKey.trim()) {
       mainWindow.displayToast("플러그인 설정에서 브이월드 API 키를 입력하세요.")
@@ -206,34 +271,31 @@ Item {
       return
     }
 
-    resultText = "토지이용계획 조회 중…"
-    var url = "https://api.vworld.kr/ned/data/getLandUseAttr?format=json&key=" +
-              encodeURIComponent(settings.vworldKey.trim()) +
-              "&pnu=" + encodeURIComponent(currentPnu) +
-              "&numOfRows=1000&pageNo=1"
+    resultText = "토지 기본정보 및 토지이용계획 조회 중…"
+    var key = encodeURIComponent(settings.vworldKey.trim())
+    var pnu = encodeURIComponent(currentPnu)
+    var parcelUrl = "https://api.vworld.kr/ned/data/ladfrlList?format=json&key=" + key + "&pnu=" + pnu
+    var zoneUrl = "https://api.vworld.kr/ned/data/getLandUseAttr?format=json&key=" + key + "&pnu=" + pnu + "&numOfRows=1000&pageNo=1"
 
-    getJson(url, function(data) {
-      var seen = {}
-      var lines = []
-      walk(data, function(o) {
-        var name = first(o, ["prposAreaDstrcCodeNm", "prposAreaDstrcCode"])
-        if (name && !seen[name]) {
-          seen[name] = true
-          lines.push("• " + name)
-        }
+    getJson(parcelUrl, function(parcelData) {
+      var parcel = findParcelObject(parcelData)
+      getJson(zoneUrl, function(zoneData) {
+        renderLand(parcel, zoneData, "", "")
+      }, function(zoneErr) {
+        renderLand(parcel, null, "", zoneErr)
       })
-      resultText = lines.length
-        ? "PNU " + currentPnu + "\n\n[토지이용계획]\n" + lines.join("\n")
-        : "토지이용계획 지정내역을 찾지 못했습니다."
-    }, function(err) {
-      resultText = "토지이용계획 조회 실패\n" + err
+    }, function(parcelErr) {
+      getJson(zoneUrl, function(zoneData) {
+        renderLand(null, zoneData, parcelErr, "")
+      }, function(zoneErr) {
+        renderLand(null, null, parcelErr, zoneErr)
+      })
     })
   }
 
   function buildingParams() {
     var p = normalizePnu(currentPnu)
-    if (!p)
-      return null
+    if (!p) return null
     return {
       sigungu: p.slice(0, 5),
       bjdong: p.slice(5, 10),
@@ -251,8 +313,7 @@ Item {
     }
 
     var p = buildingParams()
-    if (!p)
-      return
+    if (!p) return
 
     resultText = "건축물대장 조회 중…"
     var url = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo" +
@@ -269,11 +330,8 @@ Item {
       var seen = {}
       walk(data, function(o) {
         if (o.mgmBldrgstPk !== undefined || o.platPlc !== undefined) {
-          var key = first(o, ["mgmBldrgstPk"]) || JSON.stringify(o)
-          if (!seen[key]) {
-            seen[key] = true
-            rows.push(o)
-          }
+          var id = first(o, ["mgmBldrgstPk"]) || JSON.stringify(o)
+          if (!seen[id]) { seen[id] = true; rows.push(o) }
         }
       })
 
@@ -338,7 +396,6 @@ Item {
     Column {
       width: parent.width
       spacing: 10
-
       Label { text: "브이월드 API 키"; font.bold: true }
       TextField {
         id: vworldField
@@ -346,7 +403,6 @@ Item {
         echoMode: TextInput.Password
         placeholderText: "VWorld NED API 인증키"
       }
-
       Label { text: "건축HUB API 키"; font.bold: true }
       TextField {
         id: buildingField
