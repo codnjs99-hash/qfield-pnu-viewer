@@ -3,5 +3,5 @@ name=PNU Land & Building Viewer
 description=Tap a parcel in QField and query parcel basics, land-use plan, and building register by PNU.
 author=Chaewon Lee / OpenAI-assisted port
 icon=icon.svg
-version=0.1.5
+version=0.1.6
 homepage=https://github.com/codnjs99-hash/qfield-pnu-viewer/
